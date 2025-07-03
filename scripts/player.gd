@@ -102,3 +102,4 @@ func receive_damage():
 		"name": name,
 		"death": true
 	})
+	world_node.update_itemlist.rpc(world_node.player_info_list)

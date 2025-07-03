@@ -16,12 +16,15 @@ extends Node
 @onready var idle_timer: Timer = $IdleTimer
 
 const Player = preload("res://scenes/player.tscn")
+const Dummy = preload("res://scenes/dummy.tscn")
 const PORT = 9999
 const WAIT_TIME = 1
+const NUM_DUMMIES = 30
 
 var enet_peer = ENetMultiplayerPeer.new()
 var game_state = Utils.GameState.IDLE
 var player_list = []
+var dummy_nodes = []
 
 func _ready() -> void:
 	idle_timer.timeout.connect(Callable(self, "_on_idle_timer_timeout"))
@@ -68,8 +71,6 @@ func _on_join_button_pressed() -> void:
 func _on_game_start_button_pressed() -> void:
 	game_timer.start(WAIT_TIME)
 	game_start.rpc()
-	for player in player_list:
-		add_child(player)
 
 func _on_quit_button_pressed() -> void:
 	multiplayer.multiplayer_peer = null
@@ -79,7 +80,7 @@ func _on_multiplayer_peer_disconnected(peer_id):
 	print("피어 연결 끊김: ", peer_id)
 
 	remove_player(peer_id)
-	update_itemlist(player_info_list)
+	update_itemlist.rpc(player_info_list)
 
 	if peer_id == 1:
 		print("서버와의 연결이 끊어졌습니다.")
@@ -103,6 +104,16 @@ func _on_game_timer_timeout() -> void:
 		game_end.rpc()
 		game_timer.stop()
 
+func clear_all_spawned_objects():
+	for player in player_list:
+		if is_instance_valid(player):
+			player.queue_free()
+	player_list.clear()
+	for dummy in dummy_nodes:
+		if is_instance_valid(dummy):
+			dummy.queue_free()
+	dummy_nodes.clear()
+
 func reset_lobby_nodes():
 	game_start_btn.disabled = true
 	join_btn.disabled = false
@@ -119,6 +130,10 @@ func add_player(peer_id):
 	var player = Player.instantiate()
 	player.name = str(peer_id)
 	player.id = peer_id
+	player.set_multiplayer_authority(peer_id)
+	add_child(player)
+	var navigation_map = spawn_location.get_world_3d().get_navigation_map()
+	player.global_position = NavigationServer3D.map_get_random_point(navigation_map, 1, true)
 	player_list.append(player)
 	player_info_list.append({
 		"id": peer_id,
@@ -173,13 +188,41 @@ func initiate_player(player):
 @rpc("reliable", "call_local")
 func game_start():
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-	for player in player_list:
+	for player_info in player_info_list:
+		var peer_id = player_info.id
+		var player = get_node_or_null(str(peer_id))
+		if not is_instance_valid(player):
+			player = Player.instantiate()
+			player.name = str(peer_id)
+			player.id = peer_id
+			player.set_multiplayer_authority(peer_id)
+			add_child(player)
+		player.global_position = NavigationServer3D.map_get_random_point(spawn_location.get_world_3d().get_navigation_map(), 1, true)
 		initiate_player(player)
-		if is_instance_valid(player):
-			player.position = spawn_location.global_position
 	
 	game_state = Utils.GameState.PLAY
 	main_menu.hide()
+
+	if multiplayer.is_server():
+		spawn_dummies()
+
+func spawn_dummies():
+	var navigation_map = spawn_location.get_world_3d().get_navigation_map()
+	for i in range(NUM_DUMMIES):
+		var dummy_id = i
+		var random_point = NavigationServer3D.map_get_random_point(navigation_map, 1, true)
+		spawn_dummy_on_client.rpc(dummy_id, random_point)
+
+@rpc("reliable", "call_local", "any_peer")
+func spawn_dummy_on_client(dummy_id, global_position):
+	var dummy = Dummy.instantiate()
+	dummy.name = "Dummy_" + str(dummy_id)
+	dummy.id = dummy_id
+	dummy.set_multiplayer_authority(1) # Server is authority for dummies
+	add_child(dummy)
+	dummy.global_position = global_position
+	dummy_nodes.append(dummy)
+	print("Spawned dummy at: ", dummy.global_position)
 
 @rpc("reliable", "call_local")
 func game_end():
@@ -198,6 +241,8 @@ func game_end():
 				"death": false
 			})
 	player_info_list = temp_list
+	update_itemlist.rpc(player_info_list)
+	clear_all_spawned_objects()
 	
 	game_state = Utils.GameState.IDLE
 	main_menu.show()

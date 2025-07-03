@@ -2,25 +2,32 @@ extends CharacterBody3D
 
 # https://www.youtube.com/watch?v=n8D3vEx7NAE
 
-@export var is_slowrun_anim_played: bool = false
-@export var death: bool = false:
+@export var state: Utils.EntityState = Utils.EntityState.IDLE:
 	set(value):
-		death = value
-		if value and not is_death_anim_played:
-			is_slowrun_anim_played = false
+		print("[TLMS] Change state of ", name , " from ", state, " to ", value, " (on authorized device)")
+		state = value
+		if is_instance_valid(anim_player):
 			anim_player.stop()
-			anim_player.play("death")
-			collision.disabled = true
-			is_death_anim_played = true
-		elif not value:
-			is_slowrun_anim_played = false
-			if is_instance_valid(anim_player):
-				anim_player.stop()
-				anim_player.play("idle")
-			if is_instance_valid(collision):
-				collision.disabled = false
-			is_death_anim_played = false
-			velocity = Vector3.ZERO
+		match value:
+			Utils.EntityState.IDLE:
+				if is_instance_valid(anim_player):
+					anim_player.play("idle")
+				if is_instance_valid(collision):
+					collision.disabled = false
+				velocity = Vector3.ZERO
+			Utils.EntityState.WALK:
+				if is_instance_valid(anim_player):
+					anim_player.play("slowrun")
+			Utils.EntityState.ATTACK:
+				if is_instance_valid(anim_player):
+					anim_player.play("attack")
+			Utils.EntityState.DEATH:
+				if is_instance_valid(anim_player):
+					anim_player.play("death")
+				collision.disabled = true
+			Utils.EntityState.WIN:
+				if is_instance_valid(anim_player):
+					anim_player.play("win")
 
 @onready var camera = $Camera3D
 @onready var anim_player = $PlayerModel/AnimationPlayer
@@ -34,53 +41,41 @@ const JUMP_VELOCITY: float = 5.0
 const GRAVITY: float = 10.0
 const is_dummy: bool = false
 
-var is_death_anim_played: bool = false
+func _enter_tree() -> void:
+	set_multiplayer_authority(int(name))
 
 func _ready() -> void:
-	set_multiplayer_authority(int(name))
 	if not is_multiplayer_authority(): return
 	camera.current = true
 
 func _unhandled_input(event: InputEvent) -> void:
 	if world_node.game_state != Utils.GameState.PLAY: return
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 	
 	if event is InputEventMouseMotion:
 		rotate_y(-event.relative.x * SCALE)
 	
-	if Input.is_action_just_pressed("attack") \
-			and anim_player.current_animation != "attack":
-		play_attack_effects.rpc()
+	if Input.is_action_just_pressed("attack") and state != Utils.EntityState.ATTACK:
+		change_state(Utils.EntityState.ATTACK)
 		if raycast.is_colliding():
 			var hit_entity = raycast.get_collider()
 			hit_entity.receive_damage.rpc_id(hit_entity.get_multiplayer_authority())
 
 func _physics_process(delta: float) -> void:
-	if is_slowrun_anim_played and anim_player.current_animation != "slowrun":
-		anim_player.stop()
-		anim_player.play("slowrun")
-	elif not is_slowrun_anim_played and anim_player.current_animation == "slowrun":
-		anim_player.stop()
-		anim_player.play("idle")
-	
 	if world_node.game_state != Utils.GameState.PLAY: return
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 	
-	if not is_on_floor():
-		velocity.y -= GRAVITY * delta
-
-	if Input.is_action_just_pressed("jump") and is_on_floor():
-		velocity.y = JUMP_VELOCITY
+	if not is_on_floor(): velocity.y -= GRAVITY * delta
+	if Input.is_action_just_pressed("jump") and is_on_floor(): velocity.y = JUMP_VELOCITY
 	
 	var input_dir := Input.get_vector("right", "left", "down", "up")
 	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
-	if anim_player.current_animation != "attack" and input_dir != Vector2.ZERO and is_on_floor():
-		is_slowrun_anim_played = true
-	else:
-		is_slowrun_anim_played = false
+	if state == Utils.EntityState.ATTACK: pass
+	elif input_dir != Vector2.ZERO: change_state(Utils.EntityState.WALK)
+	else: change_state(Utils.EntityState.IDLE)
 	
 	if direction:
 		velocity.x = direction.x * SPEED
@@ -92,24 +87,24 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 func _on_animation_player_animation_finished(anim_name: StringName) -> void:
-	if anim_name == "attack":
-		anim_player.stop()
-		anim_player.play("idle")
+	if anim_name == "attack" and state == Utils.EntityState.ATTACK:
+		change_state(Utils.EntityState.IDLE)
 
-@rpc("reliable", "call_local")
-func play_attack_effects():
-	is_slowrun_anim_played = false
-	anim_player.stop()
-	anim_player.play("attack")
-
-@rpc("reliable", "call_local")
+@rpc("reliable", "call_local", "any_peer")
 func set_new_position(value: Vector3):
 	set_position(value)
 
 @rpc("reliable", "call_local", "any_peer")
 func receive_damage():
+	change_state(Utils.EntityState.DEATH)
+
+@rpc("reliable", "call_local", "any_peer")
+func reset_player():
+	state = Utils.EntityState.IDLE
+
+func change_state(value):
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 	
-	print("receive_damage RPC (권한자에서 실행): ", name, " 사망 처리 시작.")
-	death = true
+	if state != value:
+		state = value

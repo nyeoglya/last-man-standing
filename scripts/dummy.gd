@@ -2,14 +2,22 @@ extends CharacterBody3D
 
 # https://www.youtube.com/watch?v=iV710Vm5qm0
 
-@export var death: bool = false:
+@export var state: Utils.EntityState = Utils.EntityState.IDLE:
 	set(value):
-		death = value
-		if value:
+		state = value
+		if is_instance_valid(anim_player):
 			anim_player.stop()
-			anim_player.play("death")
-			dummy_synchronizer.set_visibility_public(false) # 동기화 비활성화
-			collision.disabled = true
+		match value:
+			Utils.EntityState.IDLE:
+				if is_instance_valid(anim_player):
+					anim_player.play("idle")
+			Utils.EntityState.WALK:
+				if is_instance_valid(anim_player):
+					anim_player.play("slowrun")
+			Utils.EntityState.DEATH:
+				if is_instance_valid(anim_player):
+					anim_player.play("death")
+				collision.disabled = true
 
 @onready var navigation_agent: NavigationAgent3D = $NavigationAgent3D
 @onready var movement_timer: Timer = $MovementTimer
@@ -37,25 +45,21 @@ func _ready() -> void:
 
 func start_wait_timer() -> void:
 	is_waiting = true
-	anim_player.play("idle")
 	velocity = Vector3.ZERO
+	change_state(Utils.EntityState.IDLE)
 	movement_timer.start(wait_time)
 
 func _on_movement_timer_timeout() -> void:
 	is_waiting = false
+	change_state(Utils.EntityState.WALK)
 	set_random_target_position()
 
 func _physics_process(delta: float) -> void:
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 	
-	if anim_player.current_animation != "slowrun" and not is_waiting:
-		anim_player.play("slowrun")
-	
-	if not is_on_floor():
-		velocity.y -= GRAVITY * delta
-	else:
-		velocity.y = 0
+	if not is_on_floor(): velocity.y -= GRAVITY * delta
+	else: velocity.y = 0
 	
 	if is_waiting:
 		velocity.x = 0
@@ -75,7 +79,7 @@ func _physics_process(delta: float) -> void:
 
 func set_random_target_position() -> void:
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 
 	var current_origin = global_transform.origin
 	var random_direction = Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0)).normalized()
@@ -90,11 +94,14 @@ func set_random_target_position() -> void:
 		target_position = closest_valid_point
 		navigation_agent.target_position = target_position
 
-@rpc("call_local", "any_peer")
-func receive_damage() -> void:
+@rpc("reliable", "call_local", "any_peer")
+func receive_damage():
+	change_state(Utils.EntityState.DEATH)
+
+func change_state(value) -> void:
 	if not is_multiplayer_authority(): return
-	if death: return
+	if state == Utils.EntityState.DEATH: return
 	
-	print("receive_damage RPC on SERVER for: ", name)
-	
-	death = true
+	# print("receive_damage RPC on SERVER for: ", name)
+	if state != value:
+		state = value

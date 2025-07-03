@@ -108,11 +108,11 @@ func _on_multiplayer_connection_failed():
 
 # 게임 타이머
 func _on_timer_timeout() -> void:
+	if not multiplayer.is_server(): return
 	if game_state == Utils.GameState.IDLE:
-		print("[TIMER] Server current: IDLE")
+		pass
 	elif game_state == Utils.GameState.PLAY:
-		print("[TIMER] Server current: PLAY")
-		var remain_player_count = Utils.count_item(player_spawn_node.get_children(), func(x): return not x.death)
+		var remain_player_count = Utils.count_item(player_spawn_node.get_children(), func(x): return x.state != Utils.EntityState.DEATH)
 		if remain_player_count <= 1:
 			print("[TLMS] Game end")
 			game_end.rpc()
@@ -174,6 +174,7 @@ func update_itemlist(player_name_list):
 func game_start():
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	for player in player_spawn_node.get_children():
+		player.reset_player.rpc()
 		player.set_new_position.rpc(NavigationServer3D.map_get_random_point(navigation_map, 1, true))
 	
 	if multiplayer.is_server(): spawn_dummies()
@@ -186,7 +187,7 @@ func spawn_dummies():
 		var dummy_id = i
 		var random_point = NavigationServer3D.map_get_random_point(navigation_map, 1, true)
 		dummy_spawner.spawn([dummy_id, random_point])
-		print("[TLMS] Spawned dummy %d at: " % dummy_id, random_point)
+		# print("[TLMS] Spawned dummy %d at: " % dummy_id, random_point)
 
 func clear_dummy():
 	for dummy in dummy_spawn_node.get_children():
@@ -200,20 +201,17 @@ func clear_player():
 func game_end():
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	
-	clear_dummy()
-	
 	for player in player_spawn_node.get_children():
-		reset_player(player)
+		if player.state != Utils.EntityState.DEATH:
+			player.change_state(Utils.EntityState.WIN) # 변화가 생겨야 동기화가 되도록 변경했으므로, IDLE인 한 놈은 변경하기
+	
+	clear_dummy()
 	
 	game_state = Utils.GameState.IDLE
 	main_menu.show()
 	
 	if multiplayer.get_unique_id() == 1:
 		game_start_btn.disabled = false
-
-func reset_player(player):
-	if is_instance_valid(player):
-		player.death = false
 
 '''
 func upnp_setup():

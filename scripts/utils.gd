@@ -1,7 +1,7 @@
 extends Node
 
-enum GameState { IDLE, PLAY, END }
-enum EntityState { IDLE, WALK, ATTACK, DEATH } # SNEAK
+enum GameState { IDLE, PLAY }
+enum EntityState { IDLE, WALK, ATTACK, DEATH, WIN } # SNEAK
 
 func count_item(datalist, filter: Callable):
 	var count = 0

@@ -1,24 +1,19 @@
 extends Node
 
 enum GameState { IDLE, PLAY, END }
+enum EntityState { IDLE, WALK, ATTACK, DEATH } # SNEAK
 
-func remove_item(datalist, filter: Callable):
-	var temp_list = []
+func count_item(datalist, filter: Callable):
+	var count = 0
 	for data in datalist:
 		if filter.call(data):
-			temp_list.append(data)
-	return temp_list
-
-func find_item(datalist, id: int):
-	for data in datalist:
-		if data.id == id:
-			return data
-	return null
+			count += 1
+	return count
 
 func fix_item(datalist, id, value):
 	var temp_list = []
 	for data in datalist:
-		if data.id == id:
+		if data == id:
 			temp_list.append(value)
 		else:
 			temp_list.append(data)
